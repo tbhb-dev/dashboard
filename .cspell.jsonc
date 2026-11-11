@@ -1,0 +1,27 @@
+{
+  "language": "en",
+  "ignorePaths": [
+    ".mise/**/*",
+    ".rumdl_cache/**/*",
+    ".vale/**/*",
+    ".venv/**/*",
+    "bazel-*/**/*",
+    ".bazel-*/**/*",
+    "LICENSE",
+    "MODULE.bazel.lock",
+    "mise.lock",
+    "**/testdata/**/*",
+    "tmp/**/*",
+    "tools/testdata/**/*"
+  ],
+  "dictionaryDefinitions": [
+    {
+      "name": "dashboard",
+      "path": "./.cspell-words.txt",
+      "addWords": true
+    }
+  ],
+  "dictionaries": [
+    "dashboard"
+  ]
+}
