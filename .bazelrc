@@ -27,4 +27,9 @@ common:windows --enable_runfiles
 # files, and the copies go stale between builds.
 startup --windows_enable_symlinks
 
+# Xcode comes from the host, through apple_support's Xcode config. Naming the
+# version makes a host without it fail, instead of building with whichever
+# Xcode is the default. Only macOS has Xcode, so only macOS gets the flag.
+build:macos --xcode_version=27.2
+
 try-import %workspace%/.bazelrc.user

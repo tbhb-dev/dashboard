@@ -2,11 +2,11 @@
 
 ## Repository
 
-`dashboard` is a public Apache-2.0 repository for future iOS and macOS apps. It currently contains repository gates and no app code.
+`dashboard` is a public Apache-2.0 repository for future iOS and macOS apps. It currently contains repository gates and empty iOS and macOS app shells.
 
 ## Layout
 
-`MODULE.bazel` pins the shared rules and tools. `BUILD.bazel` defines the repository checks, formatters, and tool shims. `REPO.bazel` excludes generated directories from source discovery. `.bazelrc` loads the generated `preset.bazelrc`. `mise.toml` and `mise.lock` pin the bootstrap tools, and `.github/` holds CI and repository policy. `REUSE.toml`, `LICENSE`, and `LICENSES/` record the license. Root configuration files and `.vale/` configure the shared gates.
+`MODULE.bazel` pins the shared rules and tools. `BUILD.bazel` defines the repository checks, formatters, and tool shims. `REPO.bazel` excludes generated directories from source discovery. `.bazelrc` loads the generated `preset.bazelrc`. `mise.toml` and `mise.lock` pin the bootstrap tools, and `.github/` holds CI and repository policy. `REUSE.toml`, `LICENSE`, and `LICENSES/` record the license. `apple/` holds the shared Swift library, the two app shells, and their Bazel targets. Root configuration files and `.vale/` configure the shared gates.
 
 ## Commands
 

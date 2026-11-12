@@ -4,8 +4,10 @@
 ---
 # actionlint 1.7.12 predates GitHub's ubuntu-26.04 images and reports their
 # labels as unknown. This list only adds labels actionlint accepts; remove
-# an entry once the pinned actionlint knows it.
+# an entry once the pinned actionlint knows it. xcode-27 is GitHub's hosted
+# Xcode 27 image, not a self-hosted runner.
 self-hosted-runner:
   labels:
     - ubuntu-26.04
     - ubuntu-26.04-arm
+    - xcode-27

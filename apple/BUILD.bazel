@@ -1,0 +1,125 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright Tony Burns
+
+load("@rules_apple//apple:ios.bzl", "ios_application", "ios_unit_test")
+load("@rules_apple//apple:macos.bzl", "macos_application", "macos_unit_test")
+load("@rules_apple//apple/testing/default_runner:ios_xctestrun_runner.bzl", "ios_xctestrun_runner")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("@rules_swift//swift:swift_library.bzl", "swift_library")
+load("@tbhb_rules//repo:defs.bzl", "repo_files")
+
+repo_files()
+
+# Xcode exists only on macOS, so every target here is incompatible elsewhere.
+# `bazel test //...` on Linux skips them, and the `apple` CI job runs them on
+# a hosted macOS runner. No target uses signing, provisioning or certificates.
+MACOS = ["@platforms//os:macos"]
+
+# The libraries and the iOS app build for iOS too, where the iOS rules'
+# transition changes the operating system, so they accept both.
+APPLE_OS = select({
+    "@platforms//os:ios": [],
+    "@platforms//os:macos": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+# The code that both apps share.
+swift_library(
+    name = "DashboardKit",
+    srcs = ["Sources/DashboardKit/DashboardKit.swift"],
+    module_name = "DashboardKit",
+    target_compatible_with = APPLE_OS,
+    visibility = ["//visibility:private"],
+)
+
+# iOS: the simulator only.
+swift_library(
+    name = "ios_app_lib",
+    srcs = ["iOS/DashboardApp.swift"],
+    module_name = "DashboardIOSApp",
+    target_compatible_with = APPLE_OS,
+    deps = [":DashboardKit"],
+)
+
+ios_application(
+    name = "ios_app",
+    bundle_id = "dev.tbhb.dashboard.ios",
+    families = ["iphone"],
+    infoplists = ["iOS/Info.plist"],
+    minimum_os_version = "17.0",
+    target_compatible_with = APPLE_OS,
+    deps = [":ios_app_lib"],
+)
+
+ios_xctestrun_runner(
+    name = "ios_simulator",
+    device_type = "iPhone 17",
+    os_version = "27.2",
+    target_compatible_with = MACOS,
+)
+
+swift_library(
+    name = "ios_tests_lib",
+    testonly = True,
+    srcs = ["iOS/Tests/DashboardAppTests.swift"],
+    module_name = "DashboardIOSAppTests",
+    target_compatible_with = APPLE_OS,
+    deps = [":DashboardKit"],
+)
+
+ios_unit_test(
+    name = "ios_app_test",
+    minimum_os_version = "17.0",
+    runner = ":ios_simulator",
+    target_compatible_with = MACOS,
+    test_host = ":ios_app",
+    deps = [":ios_tests_lib"],
+)
+
+# macOS.
+swift_library(
+    name = "macos_app_lib",
+    srcs = ["macOS/DashboardApp.swift"],
+    module_name = "DashboardMacApp",
+    target_compatible_with = APPLE_OS,
+    deps = [":DashboardKit"],
+)
+
+macos_application(
+    name = "macos_app",
+    bundle_id = "dev.tbhb.dashboard.macos",
+    infoplists = ["macOS/Info.plist"],
+    minimum_os_version = "14.0",
+    target_compatible_with = MACOS,
+    deps = [":macos_app_lib"],
+)
+
+swift_library(
+    name = "macos_tests_lib",
+    testonly = True,
+    srcs = ["macOS/Tests/DashboardAppTests.swift"],
+    module_name = "DashboardMacAppTests",
+    target_compatible_with = APPLE_OS,
+    deps = [":DashboardKit"],
+)
+
+macos_unit_test(
+    name = "macos_app_test",
+    minimum_os_version = "14.0",
+    target_compatible_with = MACOS,
+    test_host = ":macos_app",
+    deps = [":macos_tests_lib"],
+)
+
+# SwiftLint, from the binary that MODULE.bazel pins. It reads the Swift
+# sources and its config from the runfiles tree.
+sh_test(
+    name = "swiftlint_test",
+    srcs = ["tools/swiftlint_test.sh"],
+    args = ["$(rootpath @swiftlint)"],
+    data = glob(["**/*.swift"]) + [
+        ".swiftlint.yml",
+        "@swiftlint",
+    ],
+    target_compatible_with = MACOS,
+)

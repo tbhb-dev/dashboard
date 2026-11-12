@@ -23,6 +23,13 @@ bazel_dep(name = "platforms", version = "1.1.0", dev_dependency = True)
 # which git hooks and editors call without starting Bazel.
 bazel_dep(name = "bazel_env.bzl", version = "0.10.0", dev_dependency = True)
 
+# Swift and Apple builds. These are the versions that the tbhb_rules smoke
+# consumer ran against Xcode 27.2.
+bazel_dep(name = "apple_support", version = "2.12.0")
+bazel_dep(name = "rules_apple", version = "5.4.0")
+bazel_dep(name = "rules_shell", version = "0.6.1")
+bazel_dep(name = "rules_swift", version = "4.2.2")
+
 # Tool binaries: tbhb_rules' pins, one hub repository per tool. This module
 # refers to the same labels for its own targets and its bazel_env shims, so
 # each tool has one pin.
@@ -41,6 +48,17 @@ use_repo(
     "tbhb_rules_tombi",
     "tbhb_rules_vale",
     "tbhb_rules_zizmor",
+)
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+# SwiftLint's release binary (a universal macOS executable), pinned by sha256
+# so Bazel fetches it and no PATH or Homebrew copy is involved.
+http_archive(
+    name = "swiftlint",
+    build_file_content = 'exports_files(["swiftlint"])',
+    sha256 = "c1e429b0599cf1b516f369a2d9ec04eaf0e436f3c12b637df8851fa52ff694d0",
+    url = "https://github.com/realm/SwiftLint/releases/download/0.65.1/portable_swiftlint.zip",
 )
 
 http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")

@@ -49,9 +49,18 @@ jobs:
         with:
           disk-cache: ${{ github.workflow }}-${{ matrix.os }}
           cache-save: ${{ github.event_name != 'pull_request' }}
+          # The default list starts with //..., and a fetch analyzes the Apple
+          # targets, which have no toolchain on Linux. The `apple` job fetches them.
+          targets: >-
+            //:all
+            @bazel_tools//tools:tools_for_bazel_subcommands
+            @tbhb_rules//lint:zizmor
+            @tbhb_rules//lint:gitleaks_text
+            @tbhb_rules//lint:commit_identity
+            //:gitleaks_history
 
       - name: Test
-        run: bazelisk test --config=ci //...
+        run: bazelisk test --config=ci -- //... -//apple/...
 
       # A failed run's test logs, so a failure that does not recur can still
       # be read.
@@ -64,6 +73,58 @@ jobs:
             .bazel-testlogs/**/test.log
             .bazel-testlogs/**/test.xml
           # The convenience links are dotfiles, which the action skips by default.
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+  # The Swift and Apple targets need Xcode, so they run only on the
+  # GitHub-hosted xcode-27 image, never on a self-hosted runner. The image's
+  # default Xcode is 27.1, so the job selects 27.2 (build 27B52) on its
+  # ephemeral runner and prints `xcodebuild -version` before it builds.
+  # `.bazelrc` names the same version for Bazel. The setup action hardens
+  # Linux runners only, so harden-runner is not in this job.
+  apple:
+    name: "apple (xcode-27)"
+    runs-on: xcode-27
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode 27.2
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.2.app/Contents/Developer
+          xcodebuild -version | tee "${RUNNER_TEMP}/xcodebuild-version"
+          grep -qx 'Build version 27B52' "${RUNNER_TEMP}/xcodebuild-version"
+
+      - name: List simulator runtimes and devices
+        run: |
+          xcrun simctl list runtimes
+          xcrun simctl list devices available
+
+      - name: Set up Bazel for CI
+        uses: tbhb-dev/rules/.github/actions/setup-bazel-ci@c7a8816b70deb33b5c23d4f78f225abcc2918c52  # main
+        with:
+          disk-cache: ${{ github.workflow }}-apple
+          cache-save: ${{ github.event_name != 'pull_request' }}
+          # The default list names tools of other workspaces.
+          targets: //apple/...
+
+      - name: Test
+        run: bazelisk test --config=ci //apple/...
+
+      - name: Keep the test logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: testlogs-apple
+          path: |
+            .bazel-testlogs/**/test.log
+            .bazel-testlogs/**/test.xml
           include-hidden-files: true
           if-no-files-found: ignore
 
@@ -86,7 +147,7 @@ jobs:
   conclusion:
     name: conclusion
     if: always()
-    needs: [bazel, repo]
+    needs: [bazel, apple, repo]
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
