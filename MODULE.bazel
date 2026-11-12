@@ -8,7 +8,7 @@ module(name = "dashboard")
 bazel_dep(name = "tbhb_rules", version = "0.0.0", dev_dependency = True)
 git_override(
     module_name = "tbhb_rules",
-    commit = "c7a8816b70deb33b5c23d4f78f225abcc2918c52",
+    commit = "ee5cdb277a9813c6c05952e989639d8eefda16ed",
     remote = "https://github.com/tbhb-dev/rules.git",
 )
 
@@ -23,12 +23,18 @@ bazel_dep(name = "platforms", version = "1.1.0", dev_dependency = True)
 # which git hooks and editors call without starting Bazel.
 bazel_dep(name = "bazel_env.bzl", version = "0.10.0", dev_dependency = True)
 
-# Swift and Apple builds. These are the versions that the tbhb_rules smoke
-# consumer ran against Xcode 27.2.
-bazel_dep(name = "apple_support", version = "2.12.0")
-bazel_dep(name = "rules_apple", version = "5.4.0")
+# Swift and Apple builds come from tbhb_rules_swift, which pins rules_swift,
+# rules_apple and apple_support. Bazel ignores a non-root module's
+# local_path_override, so this module overrides both tbhb modules itself.
+bazel_dep(name = "tbhb_rules_swift", version = "0.0.0")
+git_override(
+    module_name = "tbhb_rules_swift",
+    commit = "ee5cdb277a9813c6c05952e989639d8eefda16ed",
+    remote = "https://github.com/tbhb-dev/rules.git",
+    strip_prefix = "swift",
+)
+
 bazel_dep(name = "rules_shell", version = "0.6.1")
-bazel_dep(name = "rules_swift", version = "4.2.2")
 
 # Tool binaries: tbhb_rules' pins, one hub repository per tool. This module
 # refers to the same labels for its own targets and its bazel_env shims, so
