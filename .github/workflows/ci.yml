@@ -49,6 +49,16 @@ jobs:
         with:
           disk-cache: ${{ github.workflow }}-${{ matrix.os }}
           cache-save: ${{ github.event_name != 'pull_request' }}
+          # The default list starts with //..., and a fetch analyzes the Apple
+          # targets, which have no toolchain on Linux. The `apple` job fetches them.
+          targets: >-
+            //:all
+            @bazel_tools//tools:tools_for_bazel_subcommands
+            @tbhb_rules//lint:zizmor
+            @tbhb_rules//lint:gitleaks_text
+            @tbhb_rules//lint:commit_identity
+            //:gitleaks_history
+            //:gazelle
 
       - name: Test
         run: bazelisk test --config=ci //...
@@ -91,6 +101,11 @@ jobs:
           sudo xcode-select -s /Applications/Xcode_27.2.app/Contents/Developer
           xcodebuild -version | tee "${RUNNER_TEMP}/xcodebuild-version"
           grep -qx 'Build version 27B52' "${RUNNER_TEMP}/xcodebuild-version"
+
+      - name: List simulator runtimes and devices
+        run: |
+          xcrun simctl list runtimes
+          xcrun simctl list devices available
 
       - name: Set up Bazel for CI
         uses: tbhb-dev/rules/.github/actions/setup-bazel-ci@c7a8816b70deb33b5c23d4f78f225abcc2918c52  # main

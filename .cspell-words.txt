@@ -36,6 +36,7 @@ sarif
 sessionstart
 shellcheck
 shfmt
+simctl
 srcs
 starlark
 subagentstart
@@ -50,5 +51,6 @@ tricolon
 uncomparables
 venv
 worktrees
+xcrun
 xctestrun
 zizmor
