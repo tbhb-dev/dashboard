@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright Tony Burns
+
+---
+
+included:
+  - Sources
+  - Tests
+  - iOS
+  - macOS

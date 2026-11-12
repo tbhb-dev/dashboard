@@ -11,6 +11,7 @@ hardwrap
 heapdump
 hermeticity
 hprof
+infoplists
 keepalive
 lockfiles
 mypy
@@ -38,13 +39,16 @@ shfmt
 srcs
 starlark
 subagentstart
+swiftlint
 tbhb
 tbhbdev
 testdata
+testonly
 tombi
 toplevel
 tricolon
 uncomparables
 venv
 worktrees
+xctestrun
 zizmor
