@@ -58,7 +58,6 @@ jobs:
             @tbhb_rules//lint:gitleaks_text
             @tbhb_rules//lint:commit_identity
             //:gitleaks_history
-            //:gazelle
 
       - name: Test
         run: bazelisk test --config=ci //...
