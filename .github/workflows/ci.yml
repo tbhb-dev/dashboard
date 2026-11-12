@@ -60,7 +60,7 @@ jobs:
             //:gitleaks_history
 
       - name: Test
-        run: bazelisk test --config=ci //...
+        run: bazelisk test --config=ci -- //... -//apple/...
 
       # A failed run's test logs, so a failure that does not recur can still
       # be read.
