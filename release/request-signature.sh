@@ -5,7 +5,8 @@
 # Request a signature for one successful release run.
 set -euo pipefail
 umask 077
-export GH_CONFIG_DIR="$HOME/.config/gh-agent"
+# Honor a caller's GitHub CLI config. Default to the agent config, never the personal one.
+export GH_CONFIG_DIR="${GH_CONFIG_DIR:-$HOME/.config/gh-agent}"
 
 die() {
   printf 'request-signature: %s\n' "$1" >&2
@@ -25,11 +26,15 @@ OUTPUT=$3
 [[ $OUTPUT == *.zip && ! -e $OUTPUT && ! -L $OUTPUT ]] || die 'output must be a new zip file'
 
 WORK=""
+STAGE=""
 finish() {
   local status=$?
   trap - EXIT HUP INT TERM PIPE
   if [[ -n $WORK ]]; then
     rm -rf -- "$WORK" || status=1
+  fi
+  if [[ -n $STAGE ]]; then
+    rm -f -- "$STAGE" || status=1
   fi
   exit "$status"
 }
@@ -38,28 +43,31 @@ trap 'exit 1' HUP INT TERM PIPE
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/request-signature.XXXXXX")
 chmod 700 "$WORK"
 
-METADATA=$(gh run view "$RUN_ID" --repo tbhb-dev/dashboard \
-  --json headSha,headBranch,conclusion \
-  --jq '[.headSha, .headBranch, .conclusion] | @tsv') || die 'cannot read run'
-IFS=$'\t' read -r COMMIT BRANCH CONCLUSION <<<"$METADATA"
+METADATA=$(gh api "repos/tbhb-dev/dashboard/actions/runs/$RUN_ID" \
+  --jq '[.head_sha, .head_branch, .conclusion, .path, .event] | @tsv') || die 'cannot read run'
+IFS=$'\t' read -r COMMIT BRANCH CONCLUSION WORKFLOW_PATH EVENT <<<"$METADATA"
 [[ $COMMIT =~ ^[0-9a-f]{40}$ && $BRANCH == main && $CONCLUSION == success ]] || die 'run must succeed on main'
+# The run's path can carry an @ref suffix. Only a manual run of the release workflow counts.
+[[ ${WORKFLOW_PATH%%@*} == .github/workflows/release.yml && $EVENT == workflow_dispatch ]] || die 'run is not a release dispatch'
 NAME="dashboard-macos-$COMMIT"
 gh run download "$RUN_ID" --repo tbhb-dev/dashboard -n "$NAME" \
   --dir "$WORK" >/dev/null 2>&1 || die 'cannot download artifact'
 [[ -f $WORK/$NAME.zip && ! -L $WORK/$NAME.zip ]] || die 'artifact zip is missing'
 
-# Verify the build provenance here too, naming the release workflow as the signer.
+# Verify the build provenance here too. The signer workflow and source ref bind
+# the attestation to the run checked above.
 gh attestation verify "$WORK/$NAME.zip" --repo tbhb-dev/dashboard \
   --signer-workflow tbhb-dev/dashboard/.github/workflows/release.yml \
-  --source-digest "$COMMIT" --deny-self-hosted-runners >/dev/null 2>&1 || die 'attestation check failed'
+  --source-digest "$COMMIT" --source-ref refs/heads/main --deny-self-hosted-runners >/dev/null 2>&1 || die 'attestation check failed'
 
 # Keep partial output private, and suppress diagnostics that name the target.
 # Both remote arguments contain only validated commit and artifact characters.
 # shellcheck disable=SC2029
 ssh "$TARGET" sign-release "$COMMIT" "$NAME.zip" \
   <"$WORK/$NAME.zip" >"$WORK/signed.zip" 2>/dev/null || die 'signature request failed'
-# Exclusive creation also refuses an output created while ssh was running.
-(
-  set -C
-  cat "$WORK/signed.zip" >"$OUTPUT"
-) || die 'cannot create output'
+# Stage the copy beside the output, then publish it with a hard link. The link
+# fails if the output exists, so a write error or a racing file never leaves a
+# truncated output. The stage name is a dotfile and the finish trap removes it.
+STAGE=$(mktemp "$(dirname -- "$OUTPUT")/.request-signature.XXXXXX") || die 'cannot stage output'
+cp "$WORK/signed.zip" "$STAGE" || die 'cannot stage output'
+ln "$STAGE" "$OUTPUT" || die 'cannot create output'
