@@ -4,9 +4,10 @@
 #
 # One-time setup of the agent signing identity on the signing host.
 #
-# Run it as the `signer` user, in a terminal, because the portal steps need
-# the Account Holder's sign-in. `--check` changes nothing and reports each
-# step's state. A rerun skips every step that is already done. Environment
+# Run it as the `signer` user, in a terminal on the host's console login, not
+# over plain ssh. The keychain prompts (`-P` and `-u`) open GUI dialogs, and the
+# portal steps need the Account Holder's sign-in. `--check` changes nothing and
+# reports each step's state. A rerun skips every step that is already done. Environment
 # for a full run:
 #   API_KEY_PATH, API_KEY_ID, API_ISSUER  App Store Connect API key (notarization)
 #   AGENT_PUBKEY_PATH                     file with the agents' public ssh key,
@@ -55,19 +56,31 @@ have_identity() {
 }
 # A private key record in the keychain, with or without a certificate.
 have_private_key() {
-  security dump-keychain "$KEYCHAIN" 2>/dev/null | grep -q "class: 0x0000000F"
+  security dump-keychain "$KEYCHAIN" 2>/dev/null | grep -Eq "class: 0x(0000000F|00000010)"
 }
 have_profile() {
   xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" \
     --keychain "$KEYCHAIN" >/dev/null 2>&1
 }
+# Lines of authorized_keys that start with the forced command. With KEY_BLOB
+# set, only the lines that also carry the agents' key.
+restricted_lines() {
+  awk -v p="command=\"$WRAPPER\",restrict " -v b="${KEY_BLOB:-}" \
+    'index($0, p) == 1 && (b == "" || index($0, b) > 0)' "$AUTHORIZED_KEYS" 2>/dev/null
+}
 have_ssh_restriction() {
-  grep -qs "command=\"$WRAPPER\",restrict" "$AUTHORIZED_KEYS"
+  restricted_lines | grep -q .
 }
-# The wrapper exists, runs, and the signer user can't change it.
+# The wrapper runs, and it and its folder are root-owned and not writable by
+# the signer user.
 have_wrapper() {
-  [[ -x $WRAPPER && ! -w $WRAPPER ]]
+  local dir=${WRAPPER%/*} file_owner dir_owner
+  [[ -x $WRAPPER && ! -w $WRAPPER && ! -w $dir ]] || return 1
+  file_owner=$(/usr/bin/stat -f '%u' "$WRAPPER")
+  dir_owner=$(/usr/bin/stat -f '%u' "$dir")
+  [[ ${file_owner} == 0 && ${dir_owner} == 0 ]]
 }
+WRAPPER_OK="$WRAPPER and its folder are root-owned, and the signer can't write them"
 # report <check function> <message if present> <message if missing>
 report() {
   if "$1"; then ok "$2"; else todo "$3"; fi
@@ -92,6 +105,10 @@ else
 fi
 
 if ((CHECK)); then
+  KEY_BLOB=""
+  if [[ -n ${AGENT_PUBKEY_PATH:-} && -r ${AGENT_PUBKEY_PATH} ]]; then
+    KEY_BLOB=$(awk '{print $2}' "$AGENT_PUBKEY_PATH")
+  fi
   step "Keychain"
   report have_keychain "$KEYCHAIN exists" "create $KEYCHAIN"
   step "Identity"
@@ -104,8 +121,8 @@ if ((CHECK)); then
   report have_ssh_restriction "authorized_keys forces $WRAPPER" \
     "restrict the agents' key to $WRAPPER"
   step "Wrapper"
-  report have_wrapper "$WRAPPER is executable and the signer can't write it" \
-    "install $WRAPPER, executable and not writable by the signer (the wrapper change covers it)"
+  report have_wrapper "$WRAPPER_OK" \
+    "install $WRAPPER, root-owned, in a root-owned folder (the wrapper change covers it)"
   exit 0
 fi
 
@@ -134,23 +151,26 @@ security unlock-keychain -u "$KEYCHAIN"
 step "2 and 3. Key pair, certificate request, and certificate"
 if have_identity; then
   ok "identity present, so no new key or request"
-elif have_private_key; then
-  die "$KEYCHAIN holds a key without a certificate. Delete the keychain and rerun."
 else
-  # The key passes through a file for a moment. The directory is private to
-  # signer, and the trap removes the key at once, including on failure.
-  TEMP_ROOT=$(getconf DARWIN_USER_TEMP_DIR)
-  WORK=$(mktemp -d "${TEMP_ROOT}agent-signing.XXXXXX")
-  trap 'rm -P "$WORK"/* || true; rmdir "$WORK" || true' EXIT
-  MODE=$(/usr/bin/stat -f '%Lp' "$WORK")
-  [[ ${MODE} == 700 ]] || die "$WORK has mode ${MODE}, not 700"
-  openssl genrsa -out "$WORK/key.pem" 2048
-  openssl req -new -key "$WORK/key.pem" -subj "/CN=agent-signing" -out "$CSR"
-  # -x marks the imported private key non-extractable.
-  security import "$WORK/key.pem" -k "$KEYCHAIN" -x -T /usr/bin/codesign
-  printf 'Request written to %s\n' "$CSR"
-  echo "Upload it in the Apple Developer portal as a Developer ID Application"
-  echo "certificate, then download the certificate."
+  if have_private_key; then
+    ok "key present without a certificate, so no new key or request"
+    printf 'Use the request already uploaded, or %s if it is still there.\n' "$CSR"
+  else
+    # The key passes through a file for a moment. The directory is private to
+    # signer, and the trap removes the key at once, including on failure.
+    TEMP_ROOT=$(getconf DARWIN_USER_TEMP_DIR)
+    WORK=$(mktemp -d "${TEMP_ROOT}agent-signing.XXXXXX")
+    trap 'rm -P "$WORK"/* || true; rmdir "$WORK" || true' EXIT
+    MODE=$(/usr/bin/stat -f '%Lp' "$WORK")
+    [[ ${MODE} == 700 ]] || die "$WORK has mode ${MODE}, not 700"
+    openssl genrsa -out "$WORK/key.pem" 2048
+    openssl req -new -key "$WORK/key.pem" -subj "/CN=agent-signing" -out "$CSR"
+    # -x marks the imported private key non-extractable.
+    security import "$WORK/key.pem" -k "$KEYCHAIN" -x -T /usr/bin/codesign
+    printf 'Request written to %s\n' "$CSR"
+    echo "Upload it in the Apple Developer portal as a Developer ID Application"
+    echo "certificate, then download the certificate."
+  fi
   read -rp "Path to the downloaded .cer: " CER_PATH
   security import "$CER_PATH" -k "$KEYCHAIN"
 fi
@@ -176,15 +196,33 @@ step "6. Restrict the agents' ssh key to the wrapper"
 mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
 KEY_BLOB=$(awk '{print $2}' "$AGENT_PUBKEY_PATH")
-if grep -qsF "$KEY_BLOB" "$AUTHORIZED_KEYS"; then
-  ok "the key is already in authorized_keys"
+FOUND=""
+if [[ -f $AUTHORIZED_KEYS ]]; then
+  FOUND=$(grep -nF -- "$KEY_BLOB" "$AUTHORIZED_KEYS" || true)
+fi
+if [[ -n ${FOUND} ]]; then
+  # The script never rewrites the file. The operator removes a bad line.
+  FOUND_COUNT=$(printf '%s\n' "${FOUND}" | wc -l)
+  if ((FOUND_COUNT == 1)) && have_ssh_restriction; then
+    ok "the key is already in authorized_keys with the forced command"
+  else
+    FOUND_LINES=$(printf '%s\n' "${FOUND}" | cut -d: -f1 | tr '\n' ' ')
+    die "the key is in $AUTHORIZED_KEYS without exactly one forced-command line. Remove line(s) ${FOUND_LINES}and rerun."
+  fi
 else
+  # Start the new line on its own line if the file lacks a final newline.
+  LAST=""
+  if [[ -s $AUTHORIZED_KEYS ]]; then
+    LAST=$(tail -c1 "$AUTHORIZED_KEYS")
+  fi
+  [[ -z ${LAST} ]] || printf '\n' >>"$AUTHORIZED_KEYS"
   printf 'command="%s",restrict %s\n' "$WRAPPER" "$AGENT_PUBKEY" >>"$AUTHORIZED_KEYS"
 fi
 chmod 600 "$AUTHORIZED_KEYS"
-report have_wrapper "$WRAPPER is executable and the signer can't write it" \
+report have_wrapper "$WRAPPER_OK" \
   "$WRAPPER isn't installed yet (the wrapper change covers it)"
 
 step "Result"
 require have_identity "Developer ID Application identity present" "identity missing"
 require have_profile "$NOTARY_PROFILE works" "notary profile missing"
+require have_ssh_restriction "authorized_keys forces $WRAPPER for the agents' key" "ssh restriction missing"
