@@ -48,6 +48,11 @@ gh run download "$RUN_ID" --repo tbhb-dev/dashboard -n "$NAME" \
   --dir "$WORK" >/dev/null 2>&1 || die 'cannot download artifact'
 [[ -f $WORK/$NAME.zip && ! -L $WORK/$NAME.zip ]] || die 'artifact zip is missing'
 
+# Verify the build provenance here too, naming the release workflow as the signer.
+gh attestation verify "$WORK/$NAME.zip" --repo tbhb-dev/dashboard \
+  --signer-workflow tbhb-dev/dashboard/.github/workflows/release.yml \
+  --source-digest "$COMMIT" --deny-self-hosted-runners >/dev/null 2>&1 || die 'attestation check failed'
+
 # Keep partial output private, and suppress diagnostics that name the target.
 # Both remote arguments contain only validated commit and artifact characters.
 # shellcheck disable=SC2029

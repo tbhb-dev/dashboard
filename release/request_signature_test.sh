@@ -26,7 +26,13 @@ assert os.environ["GH_CONFIG_DIR"] == str(Path(os.environ["HOME"]) / ".config/gh
 commit = "a" * 40
 artifact = "dashboard-macos-" + commit
 if name == "gh":
-    if args[:2] == ["run", "view"]:
+    if args[:2] == ["attestation", "verify"]:
+        assert Path(args[2]).read_bytes() == b"unsigned fixture"
+        assert args[3:] == ["--repo", "tbhb-dev/dashboard", "--signer-workflow",
+                            "tbhb-dev/dashboard/.github/workflows/release.yml",
+                            "--source-digest", "a" * 40, "--deny-self-hosted-runners"]
+        sys.exit(1 if scenario == "attestation_failure" else 0)
+    elif args[:2] == ["run", "view"]:
         assert args == ["run", "view", "42", "--repo", "tbhb-dev/dashboard",
                         "--json", "headSha,headBranch,conclusion", "--jq",
                         "[.headSha, .headBranch, .conclusion] | @tsv"]
@@ -93,7 +99,7 @@ def run_case(scenario, expected=1, arguments=None):
         if expected == 0:
             require(output.read_bytes() == b"signed fixture", scenario)
             require(output.stat().st_mode & 0o777 == 0o600, "output mode")
-            require(calls == ["gh", "gh", "ssh"], calls)
+            require(calls == ["gh", "gh", "gh", "ssh"], calls)
         elif scenario in ("existing_output", "output_race"):
             require(output.read_bytes() == b"existing fixture", scenario)
         elif scenario == "output_link":
@@ -110,7 +116,7 @@ def run_case(scenario, expected=1, arguments=None):
 run_case("passed", expected=0)
 for scenario in ("not_main", "not_success", "ssh_failure", "existing_output",
                   "view_failure", "invalid_commit", "download_failure", "missing_artifact",
-                  "output_race", "output_link"):
+                  "output_race", "output_link", "attestation_failure"):
     run_case(scenario)
 run_case("usage", expected=2, arguments=[])
 run_case("invalid_run", arguments=["bad", "fixture-destination", "output.zip"])
