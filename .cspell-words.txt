@@ -9,6 +9,7 @@ buildifier
 CDPATH
 codesign
 codesigning
+cquery
 direnv
 DYLD
 elif
@@ -33,7 +34,9 @@ mypy
 nobuild
 nocache
 noexperimental
+noextattr
 noremote
+norsrc
 nosandbox
 notarytool
 ossf

@@ -1,0 +1,130 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright Tony Burns
+
+---
+# Build and attest an unsigned app. The operator requests its signature
+# separately, after this workflow succeeds.
+name: release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: macOS release
+    runs-on: xcode-27
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write  # Authenticate build provenance with GitHub's issuer.
+      attestations: write  # Store the unsigned archive's provenance.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Require main
+        run: test "$GITHUB_REF" = refs/heads/main
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode 27.2
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.2.app/Contents/Developer
+          xcodebuild -version | tee "${RUNNER_TEMP}/xcodebuild-version"
+          grep -qx 'Build version 27B52' "${RUNNER_TEMP}/xcodebuild-version"
+
+      - name: List simulator runtimes and devices
+        run: |
+          xcrun simctl list runtimes
+          xcrun simctl list devices available
+
+      - name: Set up Bazel for CI
+        uses: tbhb-dev/rules/.github/actions/setup-bazel-ci@c7a8816b70deb33b5c23d4f78f225abcc2918c52  # main
+        with:
+          disk-cache: ${{ github.workflow }}-apple
+          cache-save: ${{ github.event_name != 'pull_request' }}
+          # The default list names tools of other workspaces.
+          targets: //apple/...
+
+      - name: Build
+        run: bazelisk build --config=ci //apple:macos_app
+
+      - name: Package the app
+        run: |
+          # Ask Bazel for this target's outputs instead of assuming an archive
+          # name or the location of its configuration directory.
+          execution_root=$(bazelisk info execution_root)
+          bazelisk cquery --config=ci --output=files //apple:macos_app >"$RUNNER_TEMP/macos-outputs"
+          mkdir "$RUNNER_TEMP/macos-unpacked" "$RUNNER_TEMP/macos-release"
+          candidates=()
+          while IFS= read -r output; do
+            # cquery paths are relative to the execution root, even when the
+            # workspace uses the .bazel-bin and .bazel-out convenience links.
+            output="$execution_root/$output"
+            case "$output" in
+              *.zip) [[ -f $output ]] && candidates+=("$output") ;;
+              *.app) [[ -d $output ]] && candidates+=("$output") ;;
+            esac
+          done <"$RUNNER_TEMP/macos-outputs"
+          [[ ${#candidates[@]} == 1 ]]
+          case "${candidates[0]}" in
+            *.zip) ditto -x -k "${candidates[0]}" "$RUNNER_TEMP/macos-unpacked" ;;
+            *.app) ditto "${candidates[0]}" "$RUNNER_TEMP/macos-unpacked/${candidates[0]##*/}" ;;
+          esac
+          find "$RUNNER_TEMP/macos-unpacked" -type d -name '*.app' -prune -print0 >"$RUNNER_TEMP/macos-apps"
+          apps=()
+          while IFS= read -r -d '' app; do apps+=("$app"); done <"$RUNNER_TEMP/macos-apps"
+          [[ ${#apps[@]} == 1 ]]
+          # Disable resource forks and extended attributes to avoid zip entries
+          # outside the app. The next step checks the exact archive sent onward.
+          ditto -c -k --keepParent --norsrc --noextattr \
+            "${apps[0]}" "$RUNNER_TEMP/macos-release/dashboard-macos-$GITHUB_SHA.zip"
+
+      - name: Check the archive
+        run: |
+          archive="$RUNNER_TEMP/macos-release/dashboard-macos-$GITHUB_SHA.zip"
+          zipinfo -1 "$archive" >"$RUNNER_TEMP/macos-names"
+          cat "$RUNNER_TEMP/macos-names"
+          zipinfo -l "$archive" >"$RUNNER_TEMP/macos-types"
+          app_name=""
+          entries=0
+          while IFS= read -r entry; do
+            [[ $entry =~ ^[A-Za-z0-9._\ /+-]+$ && $entry != /* ]]
+            entry=${entry%/}
+            case "/$entry/" in
+              */../* | */./* | *//*) exit 1 ;;
+            esac
+            root=${entry%%/*}
+            [[ $root == *.app && $root != .app ]]
+            if [[ -z $app_name ]]; then app_name=$root; fi
+            [[ $root == "$app_name" ]]
+            entries=$((entries + 1))
+          done <"$RUNNER_TEMP/macos-names"
+          types=0
+          while IFS=' ' read -r permissions rest; do
+            if [[ $permissions =~ ^[-d][rwxstST-]{9}$ ]]; then types=$((types + 1)); fi
+          done <"$RUNNER_TEMP/macos-types"
+          # Matching counts rejects symlinks and every other special file type.
+          ((entries > 0 && entries == types))
+
+      - name: Attest the archive
+        uses: actions/attest-build-provenance@e4d4f7c39adfa4c260fb5c147f0622000aa14b99  # v4.0.0
+        with:
+          subject-path: ${{ runner.temp }}/macos-release/dashboard-macos-${{ github.sha }}.zip
+
+      - name: Upload the archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: dashboard-macos-${{ github.sha }}
+          path: ${{ runner.temp }}/macos-release/dashboard-macos-${{ github.sha }}.zip
+          if-no-files-found: error
