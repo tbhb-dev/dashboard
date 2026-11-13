@@ -12,6 +12,8 @@
 
 Run `mise install` to install the bootstrap tools, then run `bazelisk run //:bazel_env` to build the tool shims.
 
+In a non-interactive shell, `bazelisk run //:bazel_env` builds the shims but exits 1 with a direnv and PATH warning, because the shell hasn't activated mise. Expect that exit. Check the shims with `test -x .bazel_env/bin/gitleaks`, or run a command through `mise exec -- <command>`.
+
 - Run `bazelisk test //...` to check every repository gate.
 - Run `bazelisk run //:format` to format the repository.
 
