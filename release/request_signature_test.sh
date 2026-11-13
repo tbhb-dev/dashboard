@@ -88,22 +88,24 @@ else:
 # Interferes inside the publish step: creates the path that the publish names as
 # its destination, then runs the real tool. Installed as both link and mv.
 INTERFERE_STUB = r'''import os
+import subprocess
 import sys
 from pathlib import Path
 
-scenario = Path(__file__).parent.parent.joinpath("scenario").read_text()
+stub = Path(__file__)
+scenario = (stub.parent.parent / "scenario").read_text()
 destination = Path(sys.argv[-1])
 if scenario == "publish_file_race":
     destination.write_bytes(b"existing fixture")
 else:
-    destination.parent.joinpath("target").mkdir(exist_ok=True)
+    (destination.parent / "target").mkdir(exist_ok=True)
     if scenario == "publish_directory_race":
         destination.mkdir()
     else:
         destination.symlink_to(destination.parent / "target")
-path = os.pathsep.join(p for p in os.environ["PATH"].split(os.pathsep) if p != str(Path(__file__).parent))
-real = next(Path(p) / Path(__file__).name for p in path.split(os.pathsep) if (Path(p) / Path(__file__).name).exists())
-os.execv(real, [str(real), *sys.argv[1:]])
+directories = [d for d in os.environ["PATH"].split(":") if d != str(stub.parent)]
+real = next(Path(d) / stub.name for d in directories if (Path(d) / stub.name).exists())
+sys.exit(subprocess.run([str(real), *sys.argv[1:]], check=False).returncode)
 '''
 COPY_STUB = r'''import sys
 from pathlib import Path
