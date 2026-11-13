@@ -42,7 +42,8 @@ if name == "git":
 elif name == "gh":
     if args[:2] == ["attestation", "verify"]:
         assert args[3:] == ["--repo", "tbhb-dev/dashboard",
-                            "--signer-workflow", "tbhb-dev/dashboard/.github/workflows/release.yml",
+                            "--cert-identity",
+                            "https://github.com/tbhb-dev/dashboard/.github/workflows/release.yml@refs/heads/main",
                             "--source-digest", "a" * 40, "--source-ref", "refs/heads/main", "--deny-self-hosted-runners"]
         assert Path(args[2]).read_bytes() == (root / "input.zip").read_bytes()
         sys.exit(1 if scenario == "attestation" else 0)

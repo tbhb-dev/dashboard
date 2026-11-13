@@ -29,8 +29,8 @@ artifact = "dashboard-macos-" + commit
 if name == "gh":
     if args[:2] == ["attestation", "verify"]:
         assert Path(args[2]).read_bytes() == b"unsigned fixture"
-        assert args[3:] == ["--repo", "tbhb-dev/dashboard", "--signer-workflow",
-                            "tbhb-dev/dashboard/.github/workflows/release.yml",
+        assert args[3:] == ["--repo", "tbhb-dev/dashboard", "--cert-identity",
+                            "https://github.com/tbhb-dev/dashboard/.github/workflows/release.yml@refs/heads/main",
                             "--source-digest", "a" * 40, "--source-ref", "refs/heads/main",
                             "--deny-self-hosted-runners", "--format", "json", "--jq",
                             ".[].verificationResult.signature.certificate.runInvocationURI"]
