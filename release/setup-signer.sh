@@ -173,6 +173,8 @@ else
   fi
   read -rp "Path to the downloaded .cer: " CER_PATH
   security import "$CER_PATH" -k "$KEYCHAIN"
+  require have_identity "Developer ID Application identity present" \
+    "the imported certificate is not a Developer ID Application identity for this key"
 fi
 
 step "4. Only Apple's tools use the private key without a prompt"
