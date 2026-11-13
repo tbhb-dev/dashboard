@@ -17,6 +17,8 @@ Run `mise install` to install the bootstrap tools, then run `bazelisk run //:baz
 
 Write each Markdown paragraph on one line. Use active voice, Oxford commas, sentence-case headings, and contractions. Avoid semicolons and future-tense phrasing. Keep private details out of this public repository.
 
+Before choosing a model for a subagent or peer run, read models/README.md in tbhb-dev/wiki (<https://github.com/tbhb-dev/wiki/blob/main/models/README.md>).
+
 ## Signing and provisioning
 
 The operator handles signing and provisioning. Agents never handle certificates or keys.
