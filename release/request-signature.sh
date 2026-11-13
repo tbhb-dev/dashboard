@@ -24,6 +24,8 @@ OUTPUT=$3
 # Reject ssh options and whitespace before passing the destination to ssh.
 [[ -n $TARGET && $TARGET != -* && $TARGET != *[[:space:]]* ]] || die 'invalid ssh target'
 [[ $OUTPUT == *.zip && ! -e $OUTPUT && ! -L $OUTPUT ]] || die 'output must be a new zip file'
+# The ./ prefix keeps a leading dash from reading as an option in mktemp or link.
+[[ $OUTPUT == /* ]] || OUTPUT=./$OUTPUT
 
 WORK=""
 STAGE=""
@@ -79,6 +81,7 @@ cp "$WORK/signed.zip" "$STAGE" || die 'cannot stage output'
 # Publish with one no-replace link, then let the finish trap unlink the stage.
 # link(1) calls link(2) directly, so it fails on any existing path, including a
 # file, directory, or symlink made while ssh ran, and never links into a directory.
-# The ./ prefix keeps a leading dash from reading as an option.
-[[ $OUTPUT == /* ]] || OUTPUT=./$OUTPUT
 link "$STAGE" "$OUTPUT" || die 'cannot create output'
+# Some link(1) builds append the source name when the destination is a directory,
+# which would publish inside it. Fail unless the output is the staged file itself.
+[[ -f $OUTPUT && ! -L $OUTPUT && $OUTPUT -ef $STAGE ]] || die 'cannot create output'

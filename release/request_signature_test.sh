@@ -85,6 +85,26 @@ elif name == "ssh":
 else:
     raise AssertionError(name)
 '''
+# Interferes inside the publish step: creates the path that the publish names as
+# its destination, then runs the real tool. Installed as both link and mv.
+INTERFERE_STUB = r'''import os
+import sys
+from pathlib import Path
+
+scenario = Path(__file__).parent.parent.joinpath("scenario").read_text()
+destination = Path(sys.argv[-1])
+if scenario == "publish_file_race":
+    destination.write_bytes(b"existing fixture")
+else:
+    destination.parent.joinpath("target").mkdir(exist_ok=True)
+    if scenario == "publish_directory_race":
+        destination.mkdir()
+    else:
+        destination.symlink_to(destination.parent / "target")
+path = os.pathsep.join(p for p in os.environ["PATH"].split(os.pathsep) if p != str(Path(__file__).parent))
+real = next(Path(p) / Path(__file__).name for p in path.split(os.pathsep) if (Path(p) / Path(__file__).name).exists())
+os.execv(real, [str(real), *sys.argv[1:]])
+'''
 COPY_STUB = r'''import sys
 from pathlib import Path
 
@@ -102,6 +122,7 @@ def require(condition, detail):
 ssh_scenarios = (
     "passed", "config_dir", "second_invocation", "ssh_failure", "output_race",
     "output_directory_race", "output_symlink_race", "copy_failure", "link_failure",
+    "publish_file_race", "publish_directory_race", "publish_symlink_race",
 )
 
 
@@ -127,6 +148,11 @@ def run_case(scenario, expected=1, arguments=None):
             stub = root / "bin" / "link"
             stub.write_text("#!" + sys.executable + "\nimport sys\nsys.exit(1)\n")
             stub.chmod(0o755)
+        if scenario.startswith("publish_"):
+            for name in ("link", "mv"):
+                stub = root / "bin" / name
+                stub.write_text("#!" + sys.executable + "\n" + INTERFERE_STUB)
+                stub.chmod(0o755)
         output = root / "output.zip"
         if scenario == "existing_output":
             output.write_bytes(b"existing fixture")
@@ -152,11 +178,11 @@ def run_case(scenario, expected=1, arguments=None):
             require(output.read_bytes() == b"signed fixture", scenario)
             require(output.stat().st_mode & 0o777 == 0o600, "output mode")
             require(calls == ["gh", "gh", "gh", "ssh"], calls)
-        elif scenario in ("existing_output", "output_race"):
+        elif scenario in ("existing_output", "output_race", "publish_file_race"):
             require(output.read_bytes() == b"existing fixture", scenario)
-        elif scenario == "output_directory_race":
+        elif scenario in ("output_directory_race", "publish_directory_race"):
             require(output.is_dir() and not list(output.iterdir()), (scenario, "published inside the directory"))
-        elif scenario == "output_symlink_race":
+        elif scenario in ("output_symlink_race", "publish_symlink_race"):
             require(output.is_symlink() and not list((root / "target").iterdir()), (scenario, "published through the link"))
         elif scenario == "output_link":
             require(output.is_symlink() and not output.exists(), scenario)
@@ -176,6 +202,7 @@ for scenario in ("not_main", "not_success", "ssh_failure", "existing_output",
                   "view_failure", "invalid_commit", "download_failure", "missing_artifact",
                   "output_race", "output_link", "attestation_failure", "wrong_workflow",
                   "wrong_event", "copy_failure", "link_failure", "output_directory_race", "output_symlink_race",
+                  "publish_file_race", "publish_directory_race", "publish_symlink_race",
                   "wrong_invocation", "wrong_attempt"):
     run_case(scenario)
 run_case("usage", expected=2, arguments=[])
