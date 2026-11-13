@@ -81,7 +81,8 @@ jobs:
             *.zip) ditto -x -k "${candidates[0]}" "$RUNNER_TEMP/macos-unpacked" ;;
             *.app) ditto "${candidates[0]}" "$RUNNER_TEMP/macos-unpacked/${candidates[0]##*/}" ;;
           esac
-          find "$RUNNER_TEMP/macos-unpacked" -type d -name '*.app' -prune -print0 >"$RUNNER_TEMP/macos-apps"
+          # Count every app bundle, nested ones included, so a second app fails the build.
+          find "$RUNNER_TEMP/macos-unpacked" -type d -name '*.app' -print0 >"$RUNNER_TEMP/macos-apps"
           apps=()
           while IFS= read -r -d '' app; do apps+=("$app"); done <"$RUNNER_TEMP/macos-apps"
           [[ ${#apps[@]} == 1 ]]

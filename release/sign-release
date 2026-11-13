@@ -155,6 +155,10 @@ while IFS= read -r ENTRY; do
 	[[ $ROOT == *.app && $ROOT != .app ]] || stop refused archive
 	if [[ -z $APP_NAME ]]; then APP_NAME=$ROOT; fi
 	[[ $ROOT == "$APP_NAME" ]] || stop refused archive
+	# The wrapper signs nested bundles under one top-level app. Any other app inside it is refused.
+	case "/${ENTRY#"$ROOT"}/" in
+	*/*.app/*) stop refused archive ;;
+	esac
 	ENTRIES=$((ENTRIES + 1))
 done <"$WORK/names"
 TYPES=0

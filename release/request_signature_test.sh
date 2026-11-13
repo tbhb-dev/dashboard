@@ -32,11 +32,24 @@ if name == "gh":
         assert args[3:] == ["--repo", "tbhb-dev/dashboard", "--signer-workflow",
                             "tbhb-dev/dashboard/.github/workflows/release.yml",
                             "--source-digest", "a" * 40, "--source-ref", "refs/heads/main",
-                            "--deny-self-hosted-runners"]
-        sys.exit(1 if scenario == "attestation_failure" else 0)
+                            "--deny-self-hosted-runners", "--format", "json", "--jq",
+                            ".[].verificationResult.signature.certificate.runInvocationURI"]
+        if scenario == "attestation_failure":
+            sys.exit(1)
+        base = "https://github.com/tbhb-dev/dashboard/actions/runs/"
+        if scenario == "wrong_invocation":
+            print(base + "41/attempts/1")
+        elif scenario == "wrong_attempt":
+            print(base + "42/attempts/2")
+        elif scenario == "second_invocation":
+            print(base + "41/attempts/1")
+            print(base + "42/attempts/1")
+        else:
+            print(base + "42/attempts/1")
+        sys.exit(0)
     elif args[0] == "api":
         assert args == ["api", "repos/tbhb-dev/dashboard/actions/runs/42", "--jq",
-                        "[.head_sha, .head_branch, .conclusion, .path, .event] | @tsv"]
+                        "[.head_sha, .head_branch, .conclusion, .path, .event, .run_attempt] | @tsv"]
         if scenario == "view_failure":
             sys.exit(1)
         print("\t".join(["invalid" if scenario == "invalid_commit" else commit,
@@ -44,7 +57,7 @@ if name == "gh":
                         "failure" if scenario == "not_success" else "success",
                         ".github/workflows/other.yml" if scenario == "wrong_workflow"
                         else ".github/workflows/release.yml@refs/heads/main",
-                        "push" if scenario == "wrong_event" else "workflow_dispatch"]))
+                        "push" if scenario == "wrong_event" else "workflow_dispatch", "1"]))
     else:
         assert args[:7] == ["run", "download", "42", "--repo", "tbhb-dev/dashboard", "-n", artifact]
         assert args[7] == "--dir" and len(args) == 9
@@ -63,6 +76,8 @@ elif name == "ssh":
     sys.stdout.buffer.write(b"partial fixture" if scenario == "ssh_failure" else b"signed fixture")
     if scenario == "output_race":
         (root / "output.zip").write_bytes(b"existing fixture")
+    if scenario == "output_directory_race":
+        (root / "output.zip").mkdir()
     sys.exit(1 if scenario == "ssh_failure" else 0)
 else:
     raise AssertionError(name)
@@ -78,6 +93,13 @@ sys.exit(1)
 def require(condition, detail):
     if not condition:
         raise AssertionError(detail)
+
+
+# Scenarios that reach ssh before they fail or pass.
+ssh_scenarios = (
+    "passed", "config_dir", "second_invocation", "ssh_failure", "output_race",
+    "output_directory_race", "copy_failure", "move_failure",
+)
 
 
 def run_case(scenario, expected=1, arguments=None):
@@ -96,6 +118,11 @@ def run_case(scenario, expected=1, arguments=None):
             # A failed copy leaves partial data in its destination.
             stub = root / "bin" / "cp"
             stub.write_text("#!" + sys.executable + "\n" + COPY_STUB)
+            stub.chmod(0o755)
+        if scenario == "move_failure":
+            # A failed rename must not leave the empty placeholder behind.
+            stub = root / "bin" / "mv"
+            stub.write_text("#!" + sys.executable + "\nimport sys\nsys.exit(1)\n")
             stub.chmod(0o755)
         output = root / "output.zip"
         if scenario == "existing_output":
@@ -124,23 +151,27 @@ def run_case(scenario, expected=1, arguments=None):
             require(calls == ["gh", "gh", "gh", "ssh"], calls)
         elif scenario in ("existing_output", "output_race"):
             require(output.read_bytes() == b"existing fixture", scenario)
+        elif scenario == "output_directory_race":
+            require(output.is_dir() and not list(output.iterdir()), (scenario, "published inside the directory"))
         elif scenario == "output_link":
             require(output.is_symlink() and not output.exists(), scenario)
         else:
             require(not output.exists(), (scenario, "partial output published"))
         if scenario in ("existing_output", "output_link", "usage", "invalid_run", "invalid_target"):
             require(calls == [], calls)
-        elif scenario not in ("passed", "config_dir", "ssh_failure", "output_race", "copy_failure"):
+        elif scenario not in ssh_scenarios:
             require("ssh" not in calls, calls)
         print("PASS", scenario)
 
 
 run_case("passed", expected=0)
 run_case("config_dir", expected=0)
+run_case("second_invocation", expected=0)
 for scenario in ("not_main", "not_success", "ssh_failure", "existing_output",
                   "view_failure", "invalid_commit", "download_failure", "missing_artifact",
                   "output_race", "output_link", "attestation_failure", "wrong_workflow",
-                  "wrong_event", "copy_failure"):
+                  "wrong_event", "copy_failure", "move_failure", "output_directory_race",
+                  "wrong_invocation", "wrong_attempt"):
     run_case(scenario)
 run_case("usage", expected=2, arguments=[])
 run_case("invalid_run", arguments=["bad", "fixture-destination", "output.zip"])

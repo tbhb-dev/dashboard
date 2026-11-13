@@ -27,6 +27,7 @@ OUTPUT=$3
 
 WORK=""
 STAGE=""
+CREATED=""
 finish() {
   local status=$?
   trap - EXIT HUP INT TERM PIPE
@@ -36,6 +37,10 @@ finish() {
   if [[ -n $STAGE ]]; then
     rm -f -- "$STAGE" || status=1
   fi
+  # Remove a placeholder that this script created but never replaced.
+  if [[ -n $CREATED ]]; then
+    rm -f -- "$OUTPUT" || status=1
+  fi
   exit "$status"
 }
 trap finish EXIT
@@ -44,8 +49,9 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/request-signature.XXXXXX")
 chmod 700 "$WORK"
 
 METADATA=$(gh api "repos/tbhb-dev/dashboard/actions/runs/$RUN_ID" \
-  --jq '[.head_sha, .head_branch, .conclusion, .path, .event] | @tsv') || die 'cannot read run'
-IFS=$'\t' read -r COMMIT BRANCH CONCLUSION WORKFLOW_PATH EVENT <<<"$METADATA"
+  --jq '[.head_sha, .head_branch, .conclusion, .path, .event, .run_attempt] | @tsv') || die 'cannot read run'
+IFS=$'\t' read -r COMMIT BRANCH CONCLUSION WORKFLOW_PATH EVENT ATTEMPT <<<"$METADATA"
+[[ $ATTEMPT =~ ^[1-9][0-9]*$ ]] || die 'invalid run attempt'
 [[ $COMMIT =~ ^[0-9a-f]{40}$ && $BRANCH == main && $CONCLUSION == success ]] || die 'run must succeed on main'
 # The run's path can carry an @ref suffix. Only a manual run of the release workflow counts.
 [[ ${WORKFLOW_PATH%%@*} == .github/workflows/release.yml && $EVENT == workflow_dispatch ]] || die 'run is not a release dispatch'
@@ -55,19 +61,33 @@ gh run download "$RUN_ID" --repo tbhb-dev/dashboard -n "$NAME" \
 [[ -f $WORK/$NAME.zip && ! -L $WORK/$NAME.zip ]] || die 'artifact zip is missing'
 
 # Verify the build provenance here too. The signer workflow and source ref bind
-# the attestation to the run checked above.
-gh attestation verify "$WORK/$NAME.zip" --repo tbhb-dev/dashboard \
+# the attestation to the release workflow on main. The certificate's run
+# invocation then binds it to the run checked above, because another run of the
+# same workflow at the same commit passes the flags alone.
+INVOCATIONS=$(gh attestation verify "$WORK/$NAME.zip" --repo tbhb-dev/dashboard \
   --signer-workflow tbhb-dev/dashboard/.github/workflows/release.yml \
-  --source-digest "$COMMIT" --source-ref refs/heads/main --deny-self-hosted-runners >/dev/null 2>&1 || die 'attestation check failed'
+  --source-digest "$COMMIT" --source-ref refs/heads/main --deny-self-hosted-runners \
+  --format json --jq '.[].verificationResult.signature.certificate.runInvocationURI' \
+  2>/dev/null) || die 'attestation check failed'
+EXPECTED="https://github.com/tbhb-dev/dashboard/actions/runs/$RUN_ID/attempts/$ATTEMPT"
+[[ $'\n'$INVOCATIONS$'\n' == *$'\n'"$EXPECTED"$'\n'* ]] || die 'attestation is for another run'
 
 # Keep partial output private, and suppress diagnostics that name the target.
 # Both remote arguments contain only validated commit and artifact characters.
 # shellcheck disable=SC2029
 ssh "$TARGET" sign-release "$COMMIT" "$NAME.zip" \
   <"$WORK/$NAME.zip" >"$WORK/signed.zip" 2>/dev/null || die 'signature request failed'
-# Stage the copy beside the output, then publish it with a hard link. The link
-# fails if the output exists, so a write error or a racing file never leaves a
-# truncated output. The stage name is a dotfile and the finish trap removes it.
+# Stage the copy beside the output. A write error then leaves no truncated
+# output, and the stage name is a dotfile that the finish trap removes.
 STAGE=$(mktemp "$(dirname -- "$OUTPUT")/.request-signature.XXXXXX") || die 'cannot stage output'
 cp "$WORK/signed.zip" "$STAGE" || die 'cannot stage output'
-ln "$STAGE" "$OUTPUT" || die 'cannot create output'
+# Exclusive creation fails on any existing path, including a directory or a
+# link made while ssh ran. The rename then replaces only our own empty file.
+(
+  set -C
+  : >"$OUTPUT"
+) || die 'cannot create output'
+CREATED=1
+mv -f -- "$STAGE" "$OUTPUT" || die 'cannot create output'
+CREATED=""
+STAGE=""
