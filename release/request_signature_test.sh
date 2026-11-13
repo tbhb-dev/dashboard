@@ -78,6 +78,9 @@ elif name == "ssh":
         (root / "output.zip").write_bytes(b"existing fixture")
     if scenario == "output_directory_race":
         (root / "output.zip").mkdir()
+    if scenario == "output_symlink_race":
+        (root / "target").mkdir()
+        (root / "output.zip").symlink_to(root / "target")
     sys.exit(1 if scenario == "ssh_failure" else 0)
 else:
     raise AssertionError(name)
@@ -98,7 +101,7 @@ def require(condition, detail):
 # Scenarios that reach ssh before they fail or pass.
 ssh_scenarios = (
     "passed", "config_dir", "second_invocation", "ssh_failure", "output_race",
-    "output_directory_race", "copy_failure", "move_failure",
+    "output_directory_race", "output_symlink_race", "copy_failure", "link_failure",
 )
 
 
@@ -119,9 +122,9 @@ def run_case(scenario, expected=1, arguments=None):
             stub = root / "bin" / "cp"
             stub.write_text("#!" + sys.executable + "\n" + COPY_STUB)
             stub.chmod(0o755)
-        if scenario == "move_failure":
-            # A failed rename must not leave the empty placeholder behind.
-            stub = root / "bin" / "mv"
+        if scenario == "link_failure":
+            # A failed link must publish nothing.
+            stub = root / "bin" / "link"
             stub.write_text("#!" + sys.executable + "\nimport sys\nsys.exit(1)\n")
             stub.chmod(0o755)
         output = root / "output.zip"
@@ -142,7 +145,7 @@ def run_case(scenario, expected=1, arguments=None):
         require(not list((root / "temp").iterdir()), (scenario, "temporary directory leaked"))
         calls = (root / "calls").read_text().splitlines()
         # Neither a failed copy nor a lost race may leave a staged file behind.
-        known = ("bin", "temp", "scenario", "calls", "output.zip", "gh-config")
+        known = ("bin", "temp", "scenario", "calls", "output.zip", "gh-config", "target")
         leftovers = sorted(path.name for path in root.iterdir() if path.name not in known)
         require(leftovers == [], (scenario, leftovers))
         if expected == 0:
@@ -153,6 +156,8 @@ def run_case(scenario, expected=1, arguments=None):
             require(output.read_bytes() == b"existing fixture", scenario)
         elif scenario == "output_directory_race":
             require(output.is_dir() and not list(output.iterdir()), (scenario, "published inside the directory"))
+        elif scenario == "output_symlink_race":
+            require(output.is_symlink() and not list((root / "target").iterdir()), (scenario, "published through the link"))
         elif scenario == "output_link":
             require(output.is_symlink() and not output.exists(), scenario)
         else:
@@ -170,7 +175,7 @@ run_case("second_invocation", expected=0)
 for scenario in ("not_main", "not_success", "ssh_failure", "existing_output",
                   "view_failure", "invalid_commit", "download_failure", "missing_artifact",
                   "output_race", "output_link", "attestation_failure", "wrong_workflow",
-                  "wrong_event", "copy_failure", "move_failure", "output_directory_race",
+                  "wrong_event", "copy_failure", "link_failure", "output_directory_race", "output_symlink_race",
                   "wrong_invocation", "wrong_attempt"):
     run_case(scenario)
 run_case("usage", expected=2, arguments=[])

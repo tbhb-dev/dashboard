@@ -27,7 +27,6 @@ OUTPUT=$3
 
 WORK=""
 STAGE=""
-CREATED=""
 finish() {
   local status=$?
   trap - EXIT HUP INT TERM PIPE
@@ -36,10 +35,6 @@ finish() {
   fi
   if [[ -n $STAGE ]]; then
     rm -f -- "$STAGE" || status=1
-  fi
-  # Remove a placeholder that this script created but never replaced.
-  if [[ -n $CREATED ]]; then
-    rm -f -- "$OUTPUT" || status=1
   fi
   exit "$status"
 }
@@ -81,13 +76,9 @@ ssh "$TARGET" sign-release "$COMMIT" "$NAME.zip" \
 # output, and the stage name is a dotfile that the finish trap removes.
 STAGE=$(mktemp "$(dirname -- "$OUTPUT")/.request-signature.XXXXXX") || die 'cannot stage output'
 cp "$WORK/signed.zip" "$STAGE" || die 'cannot stage output'
-# Exclusive creation fails on any existing path, including a directory or a
-# link made while ssh ran. The rename then replaces only our own empty file.
-(
-  set -C
-  : >"$OUTPUT"
-) || die 'cannot create output'
-CREATED=1
-mv -f -- "$STAGE" "$OUTPUT" || die 'cannot create output'
-CREATED=""
-STAGE=""
+# Publish with one no-replace link, then let the finish trap unlink the stage.
+# link(1) calls link(2) directly, so it fails on any existing path, including a
+# file, directory, or symlink made while ssh ran, and never links into a directory.
+# The ./ prefix keeps a leading dash from reading as an option.
+[[ $OUTPUT == /* ]] || OUTPUT=./$OUTPUT
+link "$STAGE" "$OUTPUT" || die 'cannot create output'
