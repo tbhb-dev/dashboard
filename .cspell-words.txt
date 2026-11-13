@@ -5,6 +5,8 @@ bazelrc
 bazelversion
 buildcop
 buildifier
+codesign
+codesigning
 direnv
 frontmatter
 hardwrap
@@ -13,6 +15,7 @@ hermeticity
 hprof
 infoplists
 keepalive
+libexec
 lockfiles
 mypy
 nobuild
@@ -20,6 +23,7 @@ nocache
 noexperimental
 noremote
 nosandbox
+notarytool
 ossf
 prek
 pretooluse
