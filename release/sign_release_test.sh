@@ -123,7 +123,7 @@ def require(condition, detail):
 
 def run_case(scenario, command=None, expected=3, reason=None, archive_kind=None, repeat=1, arguments=()):
     with tempfile.TemporaryDirectory(prefix="sign-release-test-") as directory:
-        root = Path(directory)
+        root = Path(directory).resolve()
         (root / "bin").mkdir()
         (root / "temp").mkdir()
         (root / "home").mkdir()
