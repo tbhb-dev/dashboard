@@ -79,8 +79,11 @@ ssh "$TARGET" sign-release "$COMMIT" "$NAME.zip" \
 STAGE=$(mktemp "$(dirname -- "$OUTPUT")/.request-signature.XXXXXX") || die 'cannot stage output'
 cp "$WORK/signed.zip" "$STAGE" || die 'cannot stage output'
 # Publish with one no-replace link, then let the finish trap unlink the stage.
-# link(1) calls link(2) directly, so it fails on any existing path, including a
-# file, directory, or symlink made while ssh ran, and never links into a directory.
+# link(1) fails on an existing path, which covers a file, directory, or symlink
+# that appears while ssh runs. The output directory and its parent must be
+# trusted by the operator and writable only by the requester. This script
+# doesn't defend against other users writing there, and a hostile writer can
+# still leave a stray file or swap the stage.
 link "$STAGE" "$OUTPUT" || die 'cannot create output'
 # Some link(1) builds append the source name when the destination is a directory,
 # which would publish inside it. Fail unless the output is the staged file itself.
