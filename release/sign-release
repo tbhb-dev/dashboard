@@ -137,7 +137,7 @@ HASH=${HASH%% *}
 [[ $HASH =~ ^[0-9a-f]{64}$ ]] || stop failed archive
 DIGEST=$HASH
 tool gh attestation verify "$WORK/$ARTIFACT" --repo "$REPOSITORY" \
-	--signer-workflow "$REPOSITORY/.github/workflows/release.yml" \
+	--cert-identity "https://github.com/$REPOSITORY/.github/workflows/release.yml@refs/heads/main" \
 	--source-digest "$COMMIT" --source-ref refs/heads/main --deny-self-hosted-runners >/dev/null 2>&1 || stop refused attestation
 
 # Reject links and unsafe paths before ditto can follow them during extraction.

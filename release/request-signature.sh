@@ -57,12 +57,12 @@ gh run download "$RUN_ID" --repo tbhb-dev/dashboard -n "$NAME" \
   --dir "$WORK" >/dev/null 2>&1 || die 'cannot download artifact'
 [[ -f $WORK/$NAME.zip && ! -L $WORK/$NAME.zip ]] || die 'artifact zip is missing'
 
-# Verify the build provenance here too. The signer workflow and source ref bind
+# Verify the build provenance here too. The exact certificate identity binds
 # the attestation to the release workflow on main. The certificate's run
 # invocation then binds it to the run checked above, because another run of the
 # same workflow at the same commit passes the flags alone.
 INVOCATIONS=$(gh attestation verify "$WORK/$NAME.zip" --repo tbhb-dev/dashboard \
-  --signer-workflow tbhb-dev/dashboard/.github/workflows/release.yml \
+  --cert-identity https://github.com/tbhb-dev/dashboard/.github/workflows/release.yml@refs/heads/main \
   --source-digest "$COMMIT" --source-ref refs/heads/main --deny-self-hosted-runners \
   --format json --jq '.[].verificationResult.signature.certificate.runInvocationURI' \
   2>/dev/null) || die 'attestation check failed'
