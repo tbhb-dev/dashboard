@@ -166,6 +166,8 @@ def run_case(scenario, command=None, expected=3, reason=None, archive_kind=None,
                 entry("Fixture.app/link", "../../escape", 0o120777)
             elif archive_kind == "multiple":
                 entry("Other.app/Contents/Info.plist")
+            elif archive_kind == "nested_app":
+                entry("Fixture.app/Contents/Library/Helper.app/Contents/Info.plist")
         env = dict(os.environ, SSH_ORIGINAL_COMMAND=command if command is not None else "sign-release " + COMMIT + " fixture.zip",
                     HOME="/ignored", GH_TOKEN="ignored", GH_HOST="ignored", GIT_CONFIG_COUNT="1",
                     GIT_CONFIG_KEY_0="core.sshCommand", GIT_CONFIG_VALUE_0="false",
@@ -214,7 +216,7 @@ for scenario, reason in (("not_main", "not_main"), ("no_review", "no_review"),
                           ("unmerged", "no_review"), ("attestation", "attestation"),
                           ("unknown_app", "bundle_identifier")):
     run_case(scenario, reason=reason)
-for kind in ("traversal", "symlink", "multiple"):
+for kind in ("traversal", "symlink", "multiple", "nested_app"):
     run_case(kind, archive_kind=kind, reason="archive")
 for index, command in enumerate(("sign-release " + COMMIT + " fixture.zip extra",
                                   "sign-release abc fixture.zip",
