@@ -1,0 +1,203 @@
+#!/bin/bash -p
+# SPDX-License-Identifier: Apache-2.0
+# Copyright Tony Burns
+#
+# Sign one reviewed release through the restricted ssh command.
+set -euo pipefail
+
+REPOSITORY="tbhb-dev/dashboard"
+# Keep the clone in /usr/local/libexec/sign-release-repository.
+CLONE="/usr/local/libexec/sign-release-repository"
+# Install the root-owned allow list at /usr/local/libexec/sign-release-allow-list.
+ALLOW_LIST="/usr/local/libexec/sign-release-allow-list"
+# Append the audit log at /usr/local/libexec/sign-release.log.
+LOG="/usr/local/libexec/sign-release.log"
+# Resolve the account home from the account database, ignoring caller HOME.
+HOME=~signer
+# Use the absolute account keychain path and the setup script's profile.
+KEYCHAIN="$HOME/Library/Keychains/agent-signing.keychain-db"
+NOTARY_PROFILE="agent-notary"
+# Trust only operator-managed tools. Tests change this constant in a copy.
+PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin"
+export HOME PATH
+export LC_ALL=C
+IFS=$' \t\n'
+unset GLOBIGNORE CDPATH BASH_ENV ENV
+umask 077
+
+# Privileged Bash ignores startup files, shell options, and exported functions.
+# Give every child a fresh environment, including a fixed GitHub configuration.
+tool() (
+	exec -c /usr/bin/env -i HOME="$HOME" PATH="$PATH" LC_ALL=C \
+		GH_CONFIG_DIR="$HOME/.config/gh-agent" "$@"
+)
+
+COMMIT=""
+ARTIFACT=""
+BUNDLE_ID=""
+DIGEST=""
+WORK=""
+OUTCOME=failed
+REASON=internal_error
+# Fixed reasons: malformed_command, configuration, temporary_directory, fetch,
+# not_main, github_api, no_review, attestation, archive, bundle_identifier,
+# signing, notarization, stapling, output, interrupted, internal_error, complete.
+finish() {
+	local status=$? timestamp
+	trap - EXIT HUP INT TERM PIPE
+	if [[ -n $WORK ]]; then
+		if ! tool rm -rf -- "$WORK" >/dev/null 2>&1; then
+			status=1
+			OUTCOME=failed
+			REASON=temporary_directory
+		fi
+	fi
+	timestamp=$(tool date -u '+%Y-%m-%dT%H:%M:%SZ') || exit 1
+	[[ $timestamp =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || exit 1
+	# The operator precreates the log when its root-owned parent prevents creation.
+	if [[ ! -f $LOG || -L $LOG ]] || ! tool chmod 644 "$LOG" 2>/dev/null; then
+		printf 'sign-release: audit log unavailable\n' >&2
+		exit 1
+	fi
+	printf '{"time":"%s","outcome":"%s","reason":"%s","commit":"%s","artifact":"%s","bundle_identifier":"%s","sha256":"%s"}\n' \
+		"$timestamp" "$OUTCOME" "$REASON" "$COMMIT" "$ARTIFACT" "$BUNDLE_ID" "$DIGEST" >>"$LOG" || exit 1
+	exit "$status"
+}
+stop() {
+	OUTCOME=$1
+	REASON=$2
+	printf 'sign-release: %s\n' "$REASON" >&2
+	if [[ $OUTCOME == refused ]]; then exit 3; else exit 1; fi
+}
+trap finish EXIT
+trap 'stop failed interrupted' HUP INT TERM PIPE
+
+# Create the log without replacing an existing file or following a new link.
+if [[ ! -e $LOG && ! -L $LOG ]]; then
+	(
+		umask 022
+		set -C
+		: >"$LOG"
+	) 2>/dev/null || stop failed configuration
+fi
+
+# Validate the whole command before copying any caller text into audit fields.
+COMMAND_PATTERN='^sign-release ([0-9a-f]{40}) ([A-Za-z0-9._-]{1,100}\.zip)$'
+[[ $# == 0 && ${SSH_ORIGINAL_COMMAND:-} =~ $COMMAND_PATTERN ]] || stop refused malformed_command
+COMMIT=${BASH_REMATCH[1]}
+ARTIFACT=${BASH_REMATCH[2]}
+[[ $HOME == /* && $KEYCHAIN == /* ]] || stop failed configuration
+
+# The operator provisions the clone directory and log for signer, and keeps
+# the allow list and its parent root-owned without group or other writes.
+[[ -f $ALLOW_LIST && ! -L $ALLOW_LIST ]] || stop failed configuration
+OWNER=$(tool stat -f '%u:%Lp' "$ALLOW_LIST" 2>/dev/null) || stop failed configuration
+[[ $OWNER =~ ^0:([0-7]{3,4})$ ]] || stop failed configuration
+MODE=${BASH_REMATCH[1]}
+(((8#$MODE & 8#022) == 0)) || stop failed configuration
+[[ -f $LOG && ! -L $LOG ]] || stop failed configuration
+TEMP_ROOT=$(tool getconf DARWIN_USER_TEMP_DIR 2>/dev/null) || stop failed temporary_directory
+[[ $TEMP_ROOT == /* && -d $TEMP_ROOT ]] || stop failed temporary_directory
+WORK=$(tool mktemp -d "${TEMP_ROOT%/}/sign-release.XXXXXX" 2>/dev/null) || stop failed temporary_directory
+MODE=$(tool stat -f '%Lp' "$WORK" 2>/dev/null) || stop failed temporary_directory
+[[ $MODE == 700 ]] || stop failed temporary_directory
+
+# Keep tool diagnostics private. Print only fixed reason codes to the caller.
+# Use the operator-provisioned clone with origin set to the public repository.
+[[ -d $CLONE/.git ]] || stop failed configuration
+REASON=fetch
+tool git -C "$CLONE" -c remote.origin.fetch=+refs/heads/main:refs/remotes/origin/main \
+	fetch origin main >/dev/null 2>&1 || stop failed fetch
+tool git -C "$CLONE" merge-base --is-ancestor "$COMMIT" origin/main >/dev/null 2>&1 || stop refused not_main
+
+# Query all pages with default GET requests and no request-body flags.
+PRS=$(tool gh api "repos/$REPOSITORY/commits/$COMMIT/pulls" --paginate \
+	--jq '.[].number' 2>/dev/null) || stop failed github_api
+REVIEWED=0
+while IFS= read -r PR; do
+	[[ -n $PR ]] || continue
+	[[ $PR =~ ^[1-9][0-9]{0,9}$ ]] || stop failed github_api
+	HEAD=$(tool gh api "repos/$REPOSITORY/pulls/$PR" \
+		--jq "select(.merged == true and .merge_commit_sha == \"$COMMIT\" and .base.ref == \"main\" and .base.repo.full_name == \"$REPOSITORY\") | .head.sha" 2>/dev/null) || stop failed github_api
+	[[ -n $HEAD ]] || continue
+	[[ $HEAD =~ ^[0-9a-f]{40}$ ]] || stop failed github_api
+	REVIEWS=$(tool gh api "repos/$REPOSITORY/pulls/$PR/reviews" --paginate \
+		--jq ".[] | select(.state == \"APPROVED\" and .commit_id == \"$HEAD\") | .id" 2>/dev/null) || stop failed github_api
+	while IFS= read -r REVIEW; do
+		[[ -n $REVIEW ]] || continue
+		[[ $REVIEW =~ ^[1-9][0-9]*$ ]] || stop failed github_api
+		REVIEWED=1
+	done <<<"$REVIEWS"
+done <<<"$PRS"
+((REVIEWED)) || stop refused no_review
+
+tool cat >"$WORK/$ARTIFACT" || stop failed archive
+HASH=$(tool shasum -a 256 "$WORK/$ARTIFACT" 2>/dev/null) || stop failed archive
+HASH=${HASH%% *}
+[[ $HASH =~ ^[0-9a-f]{64}$ ]] || stop failed archive
+DIGEST=$HASH
+tool gh attestation verify "$WORK/$ARTIFACT" --repo "$REPOSITORY" \
+	--source-digest "$COMMIT" --deny-self-hosted-runners >/dev/null 2>&1 || stop refused attestation
+
+# Reject links and unsafe paths before ditto can follow them during extraction.
+# Limit archives to regular files and directories under one top-level app.
+tool zipinfo -1 "$WORK/$ARTIFACT" >"$WORK/names" 2>/dev/null || stop refused archive
+tool zipinfo -l "$WORK/$ARTIFACT" >"$WORK/types" 2>/dev/null || stop refused archive
+APP_NAME=""
+ENTRIES=0
+while IFS= read -r ENTRY; do
+	[[ $ENTRY =~ ^[A-Za-z0-9._\ /+-]+$ && $ENTRY != /* ]] || stop refused archive
+	ENTRY=${ENTRY%/}
+	case "/$ENTRY/" in
+	*/../* | */./* | *//*) stop refused archive ;;
+	esac
+	ROOT=${ENTRY%%/*}
+	[[ $ROOT == *.app && $ROOT != .app ]] || stop refused archive
+	if [[ -z $APP_NAME ]]; then APP_NAME=$ROOT; fi
+	[[ $ROOT == "$APP_NAME" ]] || stop refused archive
+	ENTRIES=$((ENTRIES + 1))
+done <"$WORK/names"
+TYPES=0
+while IFS=' ' read -r PERMISSIONS REST; do
+	if [[ $PERMISSIONS =~ ^[-d][rwxstST-]{9}$ ]]; then TYPES=$((TYPES + 1)); fi
+done <"$WORK/types"
+((ENTRIES > 0 && ENTRIES == TYPES)) || stop refused archive
+tool mkdir "$WORK/unpacked" || stop failed archive
+tool ditto -x -k "$WORK/$ARTIFACT" "$WORK/unpacked" >/dev/null 2>&1 || stop refused archive
+APP="$WORK/unpacked/$APP_NAME"
+[[ -d $APP && -f $APP/Contents/Info.plist ]] || stop refused archive
+IDENTIFIER=$(tool plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist" 2>/dev/null) || stop refused bundle_identifier
+[[ $IDENTIFIER =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,254}$ ]] || stop refused bundle_identifier
+BUNDLE_ID=$IDENTIFIER
+tool grep -Fxq -- "$BUNDLE_ID" "$ALLOW_LIST" || stop refused bundle_identifier
+
+# Walk in depth order so each nested Mach-O and code bundle precedes its parent.
+tool find "$APP" -depth -print0 >"$WORK/code" || stop failed signing
+while IFS= read -r -d '' CODE; do
+	SIGN=0
+	if [[ -f $CODE ]]; then
+		KIND=$(tool file -b "$CODE" 2>/dev/null) || stop failed signing
+		if [[ $KIND == *Mach-O* ]]; then SIGN=1; fi
+	elif [[ -d $CODE && $CODE != "$APP" ]]; then
+		case "$CODE" in
+		*.app | *.framework | *.xpc | *.appex | *.bundle) SIGN=1 ;;
+		esac
+	fi
+	if ((SIGN)); then
+		tool codesign --force --options runtime --timestamp --keychain "$KEYCHAIN" \
+			--sign "Developer ID Application" "$CODE" >/dev/null 2>&1 || stop failed signing
+	fi
+done <"$WORK/code"
+tool codesign --force --options runtime --timestamp --keychain "$KEYCHAIN" \
+	--sign "Developer ID Application" "$APP" >/dev/null 2>&1 || stop failed signing
+tool ditto -c -k --keepParent "$APP" "$WORK/submit.zip" >/dev/null 2>&1 || stop failed archive
+tool xcrun notarytool submit "$WORK/submit.zip" --wait \
+	--keychain-profile "$NOTARY_PROFILE" --keychain "$KEYCHAIN" \
+	--output-format json >"$WORK/notary.json" 2>/dev/null || stop failed notarization
+NOTARY_STATUS=$(tool plutil -extract status raw -o - "$WORK/notary.json" 2>/dev/null) || stop failed notarization
+[[ $NOTARY_STATUS == Accepted ]] || stop failed notarization
+tool xcrun stapler staple "$APP" >/dev/null 2>&1 || stop failed stapling
+tool ditto -c -k --keepParent "$APP" "$WORK/result.zip" >/dev/null 2>&1 || stop failed archive
+tool cat "$WORK/result.zip" || stop failed output
+OUTCOME=passed
+REASON=complete

@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright Tony Burns
+
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("@tbhb_rules//repo:defs.bzl", "repo_files")
+
+repo_files()
+
+sh_test(
+    name = "sign_release_test",
+    srcs = ["sign_release_test.sh"],
+    args = ["$(rootpath :sign-release)"],
+    data = ["sign-release"],
+)
