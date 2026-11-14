@@ -8,7 +8,7 @@ module(name = "dashboard")
 bazel_dep(name = "tbhb_rules", version = "0.0.0", dev_dependency = True)
 git_override(
     module_name = "tbhb_rules",
-    commit = "ee5cdb277a9813c6c05952e989639d8eefda16ed",
+    commit = "c90ce38c84b6a00fa0f61888799499f32f22f9d4",
     remote = "https://github.com/tbhb-dev/rules.git",
 )
 
@@ -29,7 +29,7 @@ bazel_dep(name = "bazel_env.bzl", version = "0.10.0", dev_dependency = True)
 bazel_dep(name = "tbhb_rules_swift", version = "0.0.0")
 git_override(
     module_name = "tbhb_rules_swift",
-    commit = "ee5cdb277a9813c6c05952e989639d8eefda16ed",
+    commit = "c90ce38c84b6a00fa0f61888799499f32f22f9d4",
     remote = "https://github.com/tbhb-dev/rules.git",
     strip_prefix = "swift",
 )

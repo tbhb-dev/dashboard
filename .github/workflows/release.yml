@@ -49,7 +49,7 @@ jobs:
           xcrun simctl list devices available
 
       - name: Set up Bazel for CI
-        uses: tbhb-dev/rules/.github/actions/setup-bazel-ci@c7a8816b70deb33b5c23d4f78f225abcc2918c52  # main
+        uses: tbhb-dev/rules/.github/actions/setup-bazel-ci@c90ce38c84b6a00fa0f61888799499f32f22f9d4  # main
         with:
           disk-cache: ${{ github.workflow }}-apple
           cache-save: ${{ github.event_name != 'pull_request' }}
